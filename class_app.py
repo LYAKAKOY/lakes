@@ -2,6 +2,8 @@ import tkinter as tk
 import sqlite3 as sq
 import asyncio
 import aiohttp
+import pyttsx3
+import threading
 import re
 import io
 from concurrent.futures import ThreadPoolExecutor
@@ -9,7 +11,6 @@ from bs4 import BeautifulSoup
 from tkinter import ttk, messagebox
 from tkinter import filedialog
 from PIL import Image, ImageTk
-
 
 class App:
     DB_NAME = "Russian's_lakes.db"
@@ -26,6 +27,8 @@ class App:
         self.root = tk.Tk()
         self.style = ttk.Style()
         self.task = None
+        self.image_lake = None
+        self.image_lake_refactor = None
         self.style.configure('Search.TEntry', foreground='grey')
         width = 700
         height = 400
@@ -65,6 +68,8 @@ class App:
         self.text_field = tk.Text(self.root, wrap=tk.WORD)
         self.text_field.grid(row=0, column=2, sticky=tk.NS + tk.EW)
         self.text_field.configure(state="disabled")
+        # voice_button = ttk.Button(self.root, text="\U0001F4E2", command=self.voice, width=2)
+        # voice_button.grid(row=0, column=2, padx=5, pady=10, sticky=tk.NE)
 
         self.root.rowconfigure(0, weight=1, uniform="row")
         self.root.columnconfigure(0, weight=25, uniform="column")
@@ -88,7 +93,7 @@ class App:
         file_menu.add_command(label="Удалить F3", command=self.delete_lake_window)
         self.root.bind("<F3>", lambda event: self.delete_lake_window())
         file_menu.add_command(label="Выйти F4", command=self.root.quit)
-        self.root.bind("<F4>", lambda event: self.root.quit())
+        self.root.bind("<F4>", lambda event: self.refactor_lake())
 
         # Menu2
         file_menu2 = tk.Menu(menu_bar, tearoff=0)
@@ -100,6 +105,19 @@ class App:
 
         self.root.config(menu=menu_bar)
         self.root.mainloop()
+
+    def voice(self):
+        text_to_speak = self.text_field.get(0.1, tk.END)
+        thread = threading.Thread(target=self.reading_text, args=(text_to_speak,))
+        thread.start()
+
+    @staticmethod
+    def reading_text(text: str):
+        engine = pyttsx3.init()
+        voices = engine.getProperty('voices')
+        engine.setProperty('voice', voices[0].id)
+        engine.say(text)
+        engine.runAndWait()
 
     def show_modal_window(self):
         x_child, y_child = self.pack_window(400, 170)
@@ -249,7 +267,7 @@ class App:
                 self.text_field.insert(tk.END, description)
                 self.text_field.configure(state="disabled")
         except tk.TclError:
-            messagebox.showinfo('Информация', 'Данное поле только для просмотра!')
+            pass
 
     def delete_lake_window(self):
         del_window = tk.Toplevel()
@@ -285,11 +303,23 @@ class App:
         messagebox.showinfo('Удаление озера', f'Удаление {name} успешно прошло!')
 
     def add_lake(self):
-        def delete_info_about_lake():
+        def delete_info_about_lake() -> None:
             text_field_about_lake.delete(1.0, tk.END)
-            if not text_field_about_lake.get(1.0, tk.END).strip():
-                text_field_about_lake.insert(0.1, "Введите информацию об озере...")
-                text_field_about_lake.configure(foreground="#999")
+            text_field_about_lake.insert(0.1, "Введите информацию об озере...")
+            text_field_about_lake.configure(foreground="#999")
+
+        def delete_name_of_lake() -> None:
+            lake_name_entry.delete(0, tk.END)
+            lake_name_entry.insert(0, 'Введите название озера...')
+            lake_name_entry.configure(foreground="#999")
+
+        def delete_picture_of_lake() -> None:
+            self.image_lake = None
+            image = Image.open("no_image-1280x1280.png")
+            image = image.resize((150, 150))
+            photo = ImageTk.PhotoImage(image)
+            open_file_button.configure(image=photo)
+            open_file_button.image = photo
 
         def parse_content(content):
             soup = BeautifulSoup(content, 'html.parser')
@@ -330,21 +360,27 @@ class App:
                 tk.messagebox.showerror("Ошибка", "Поле с названием озера не должно быть пустым!")
 
         def open_file_dialog():
-            file_path_lake.configure(foreground='black')
             file_path = filedialog.askopenfilename(parent=add_form)
             if file_path:
-                file_path_lake.delete(0, tk.END)
-                file_path_lake.insert(0, file_path)
+                self.image_lake = file_path
+                image = Image.open(file_path)
+                image = image.resize((150, 150))
+                photo = ImageTk.PhotoImage(image)
+                open_file_button.configure(image=photo)
+                open_file_button.image = photo
 
         def save_data():
             name_of_lake = lake_name_entry.get()
-            file_path = file_path_lake.get()
-            if name_of_lake in ('', "Введите название озера...") or file_path in ('', "Введите путь картинки озера..."):
+            if name_of_lake in ('', "Введите название озера..."):
                 tk.messagebox.showerror("Ошибка", "Обязательные поля: картинка озера и название озера")
             else:
                 with sq.connect("Russian's_Lakes.db") as con:
-                    with open(file_path, 'rb') as image_file:
-                        image_data = image_file.read()
+                    if self.image_lake_refactor is not None:
+                        with open(self.image_lake_refactor, 'rb') as image_file:
+                            image_data = image_file.read()
+                    else:
+                        with open('no_image-1280x1280.png', 'rb') as image_file:
+                            image_data = image_file.read()
                     cur = con.cursor()
                     text_about_lake = text_field_about_lake.get(1.0, tk.END)
                     if text_about_lake.strip() == 'Введите информацию об озере...':
@@ -359,7 +395,6 @@ class App:
 
         def cancel():
             lake_name_entry.delete(0, tk.END)
-            file_path_lake.delete(0, tk.END)
             add_form.destroy()
 
         def clear_entry_text(event):
@@ -378,34 +413,35 @@ class App:
         self.settings_window(add_form)
         add_form.title("Ввод информации о озере")
         add_form.resizable(False, False)
-        file_path_lake = ttk.Entry(add_form, width=75)
-        file_path_lake.configure(foreground="#999")
-        file_path_lake.insert(0, "Введите путь картинки озера...")
-        file_path_lake.bind("<FocusIn>",
-                            lambda event: self.hide_text_info(event.widget, "Введите путь картинки озера..."))
-        file_path_lake.bind('<FocusOut>',
-                            lambda event: self.set_text_info(event.widget, "Введите путь картинки озера..."))
-        file_path_lake.grid(row=0, column=0, padx=5, pady=5, columnspan=2)
-        open_file_button = ttk.Button(add_form, text="Обзор...", command=open_file_dialog)
-        open_file_button.grid(row=0, column=2, padx=5, pady=5)
 
-        lake_name_entry = ttk.Entry(add_form, width=75)
+        image = Image.open("no_image-1280x1280.png")
+        image = image.resize((150, 150))
+        photo = ImageTk.PhotoImage(image)
+
+        open_file_button = ttk.Button(add_form, text="Обзор...", command=open_file_dialog, image=photo)
+        open_file_button.image = photo
+        open_file_button.grid(row=0, column=0, columnspan=2, padx=5, pady=5)
+        delete = ttk.Button(add_form, text="\u2715", command=delete_picture_of_lake, width=2)
+        delete.grid(row=0, column=1, padx=50, pady=10, sticky=tk.NW)
+
+        lake_name_entry = ttk.Entry(add_form, width=20)
         lake_name_entry.configure(foreground="#999")
         lake_name_entry.insert(0, "Введите название озера...")
         lake_name_entry.bind("<FocusIn>", lambda event: self.hide_text_info(event.widget, "Введите название озера..."))
         lake_name_entry.bind('<FocusOut>', lambda event: self.set_text_info(event.widget, "Введите название озера..."))
-        lake_name_entry.grid(row=1, column=0, padx=5, pady=5, columnspan=2)
+        lake_name_entry.grid(row=1, column=0, columnspan=2, padx=5, pady=5, sticky=tk.EW)
+        delete = ttk.Button(add_form, text="\u2715", command=delete_name_of_lake, width=2)
+        delete.grid(row=1, column=1, padx=5, pady=10, sticky=tk.NE)
 
-        text_field_about_lake = tk.Text(add_form, width=57, height=5)
+        text_field_about_lake = tk.Text(add_form, width=45, height=5)
         text_field_about_lake.configure(foreground='#999')
         text_field_about_lake.insert(0.1, "Введите информацию об озере...")
         text_field_about_lake.bind("<Control-c>", lambda event: self.text_field.event_generate("<<Copy>>"))
         text_field_about_lake.bind("<FocusIn>", clear_entry_text)
         text_field_about_lake.bind('<FocusOut>', set_hint_text)
         text_field_about_lake.grid(row=2, column=0, columnspan=2, sticky=tk.S)
-
-        delete = ttk.Button(add_form, text="Очистить", command=delete_info_about_lake)
-        delete.grid(row=2, column=2, padx=5, pady=10)
+        delete = ttk.Button(add_form, text="\u2715", command=delete_info_about_lake, width=2)
+        delete.grid(row=2, column=1, padx=5, pady=10, sticky=tk.NE)
 
         button_about_lake = ttk.Button(add_form, text="Взять информацию об озере из википедии",
                                        command=connect_to_wikipedia)
@@ -417,7 +453,191 @@ class App:
         cancel_button = ttk.Button(add_form, text="Отмена", command=cancel, width=25)
         cancel_button.grid(row=4, column=1, pady=10)
 
-        add_form.mainloop()
+    def refactor_lake(self):
+        def delete_info_about_lake() -> None:
+            text_field_about_lake.delete(1.0, tk.END)
+            text_field_about_lake.insert(0.1, "Введите информацию об озере...")
+            text_field_about_lake.configure(foreground="#999")
+
+        def delete_name_of_lake() -> None:
+            lake_name_entry.delete(0, tk.END)
+            lake_name_entry.insert(0, 'Введите название озера...')
+            lake_name_entry.configure(foreground="#999")
+
+        def delete_picture_of_lake() -> None:
+            self.image_lake_refactor = None
+            image = Image.open("no_image-1280x1280.png")
+            image = image.resize((150, 150))
+            photo = ImageTk.PhotoImage(image)
+            open_file_button.configure(image=photo)
+            open_file_button.image = photo
+
+        def parse_content(content):
+            soup = BeautifulSoup(content, 'html.parser')
+            body_content = soup.find(id='bodyContent')
+            text = body_content.get_text()
+            text = re.sub(r'\n\s*\n', '\n', text)
+            return text.strip()
+
+        async def get_info_lake(session: aiohttp.ClientSession, url):
+            try:
+                async with session.get(url) as connection:
+                    if connection.status == 200:
+                        content = await connection.text()
+                        loop = asyncio.get_running_loop()
+                        with ThreadPoolExecutor() as pool:
+                            task = loop.run_in_executor(
+                                pool, parse_content, content
+                            )
+                            result = await task
+                            if text_field_about_lake.get(0.1, tk.END).strip() == "Введите информацию об озере...":
+                                text_field_about_lake.delete(1.0, tk.END)
+                            text_field_about_lake.configure(foreground='black')
+                            text_field_about_lake.insert(tk.END, result)
+                    else:
+                        tk.messagebox.showerror("Ошибка", "Информации о данном озере нет в википедии")
+            except aiohttp.ClientConnectionError:
+                tk.messagebox.showerror("Ошибка", "Отсутствует интернет или сайт википедии не отвечает!")
+
+        async def get_wikipedia(topic: str):
+            url = f'https://ru.wikipedia.org/wiki/{topic}'
+            async with aiohttp.ClientSession() as session:
+                await get_info_lake(session, url)
+
+        def connect_to_wikipedia():
+            if lake_name_entry.get() != '' and lake_name_entry.get() != "Введите название озера...":
+                asyncio.run(get_wikipedia(lake_name_entry.get()))
+            else:
+                tk.messagebox.showerror("Ошибка", "Поле с названием озера не должно быть пустым!")
+
+        def open_file_dialog():
+            file_path = filedialog.askopenfilename(parent=add_form)
+            if file_path:
+                self.image_lake_refactor = file_path
+                image = Image.open(file_path)
+                image = image.resize((150, 150))
+                photo = ImageTk.PhotoImage(image)
+                open_file_button.configure(image=photo)
+                open_file_button.image = photo
+
+        def update_data():
+            name_of_lake = lake_name_entry.get()
+            if combo_box.current() == 0:
+                return
+            else:
+                name_update = self.list_of_lakes[combo_box.current() - 1]
+            if name_of_lake in ('', "Введите название озера..."):
+                tk.messagebox.showerror("Ошибка", "Обязательное поле: название озера")
+            else:
+                with sq.connect("Russian's_Lakes.db") as con:
+                    if self.image_lake_refactor is not None:
+                        with open(self.image_lake_refactor, 'rb') as image_file:
+                            image_data = image_file.read()
+                    else:
+                        with open('no_image-1280x1280.png', 'rb') as image_file:
+                            image_data = image_file.read()
+                    cur = con.cursor()
+                    text_about_lake = text_field_about_lake.get(1.0, tk.END)
+                    if text_about_lake.strip() == 'Введите информацию об озере...':
+                        text_about_lake = 'Нет информации'
+                    cur.execute("UPDATE lakes SET name = ?, picture = ?, description = ? WHERE name = ? ",
+                                (name_of_lake, image_data,
+                                 text_about_lake, name_update))
+                self.list_of_lakes.remove(name_update)
+                list_box_values = self.list_box.get(0, tk.END)
+                for i, value in enumerate(list_box_values):
+                    if value == name_update:
+                        self.list_box.delete(i)
+                self.list_of_lakes.append(name_of_lake)
+                self.list_box.insert(tk.END, name_of_lake)
+                messagebox.showinfo('Результат', 'Изменения успешно применены')
+                add_form.destroy()
+
+        def cancel():
+            lake_name_entry.delete(0, tk.END)
+            add_form.destroy()
+
+        def clear_entry_text(event):
+            field: tk.Text = event.widget
+            if field.get(0.1, tk.END).strip() == "Введите информацию об озере...":
+                field.delete(1.0, tk.END)
+                field.configure(foreground='black')
+
+        def set_hint_text(event):
+            field: tk.Text = event.widget
+            if not field.get(1.0, tk.END).strip():
+                field.insert(0.1, "Введите информацию об озере...")
+                field.configure(foreground="#999")
+
+        def selected(event):
+            if combo_box.current() == 0:
+                return
+            box: ttk.Combobox = event.widget
+            name = box.get()
+            with sq.connect(self.DB_NAME) as connection:
+                cur = connection.cursor()
+                image_url, description = cur.execute("SELECT picture, description FROM lakes WHERE name = ?",
+                                                     (name,)).fetchone()
+
+                photo = Image.open(io.BytesIO(image_url)).resize((150, 150), Image.BICUBIC)
+                picture = ImageTk.PhotoImage(photo)
+                open_file_button.configure(image=picture)
+                open_file_button.image = picture
+                lake_name_entry.delete(0, tk.END)
+                lake_name_entry.insert(0, name)
+                lake_name_entry.configure(foreground='black')
+                text_field_about_lake.delete(1.0, tk.END)
+                text_field_about_lake.insert(tk.END, description)
+                text_field_about_lake.configure(foreground='black')
+
+        add_form = tk.Toplevel()
+        self.settings_window(add_form)
+        add_form.title("Ввод информации о озере")
+        add_form.resizable(False, False)
+
+        image = Image.open("no_image-1280x1280.png")
+        image = image.resize((150, 150))
+        photo = ImageTk.PhotoImage(image)
+
+        open_file_button = ttk.Button(add_form, text="Обзор...", command=open_file_dialog, image=photo)
+        open_file_button.image = photo
+        open_file_button.grid(row=0, column=0, columnspan=2, padx=5, pady=5)
+        delete = ttk.Button(add_form, text="\u2715", command=delete_picture_of_lake, width=2)
+        delete.grid(row=0, column=1, padx=50, pady=10, sticky=tk.NW)
+
+        combo_box = ttk.Combobox(add_form, values=['Выберите озеро'] + self.list_of_lakes, state="readonly", width=10,
+                                 foreground='gray')
+        combo_box.current(0)
+        combo_box.grid(row=0, column=0, padx=10, pady=10, sticky=tk.NW)
+        combo_box.bind("<<ComboboxSelected>>", selected)
+        lake_name_entry = ttk.Entry(add_form, width=20)
+        lake_name_entry.configure(foreground="#999")
+        lake_name_entry.insert(0, "Введите название озера...")
+        lake_name_entry.bind("<FocusIn>", lambda event: self.hide_text_info(event.widget, "Введите название озера..."))
+        lake_name_entry.bind('<FocusOut>', lambda event: self.set_text_info(event.widget, "Введите название озера..."))
+        lake_name_entry.grid(row=1, column=0, columnspan=2, padx=5, pady=5, sticky=tk.EW)
+        delete = ttk.Button(add_form, text="\u2715", command=delete_name_of_lake, width=2)
+        delete.grid(row=1, column=1, padx=5, pady=10, sticky=tk.NE)
+
+        text_field_about_lake = tk.Text(add_form, width=45, height=5)
+        text_field_about_lake.configure(foreground='#999')
+        text_field_about_lake.insert(0.1, "Введите информацию об озере...")
+        text_field_about_lake.bind("<Control-c>", lambda event: self.text_field.event_generate("<<Copy>>"))
+        text_field_about_lake.bind("<FocusIn>", clear_entry_text)
+        text_field_about_lake.bind('<FocusOut>', set_hint_text)
+        text_field_about_lake.grid(row=2, column=0, columnspan=2, sticky=tk.S)
+        delete = ttk.Button(add_form, text="\u2715", command=delete_info_about_lake, width=2)
+        delete.grid(row=2, column=1, padx=5, pady=10, sticky=tk.NE)
+
+        button_about_lake = ttk.Button(add_form, text="Взять информацию об озере из википедии",
+                                       command=connect_to_wikipedia)
+        button_about_lake.grid(row=3, column=0, columnspan=2, padx=5, pady=10)
+
+        save_button = ttk.Button(add_form, text="Сохранить", command=update_data, width=25)
+        save_button.grid(row=4, column=0, pady=10)
+
+        cancel_button = ttk.Button(add_form, text="Отмена", command=cancel, width=25)
+        cancel_button.grid(row=4, column=1, pady=10)
 
 
 if __name__ == '__main__':
