@@ -2,8 +2,6 @@ import tkinter as tk
 import sqlite3 as sq
 import asyncio
 import aiohttp
-import pyttsx3
-import threading
 import re
 import io
 from concurrent.futures import ThreadPoolExecutor
@@ -62,14 +60,17 @@ class App:
     def get_list_of_lakes(cls) -> list:
         with sq.connect(cls.DB_NAME) as connection:
             cur = connection.cursor()
-            list_of_lakes = cur.execute("SELECT name FROM lakes").fetchall()
+            list_of_lakes = cur.execute("SELECT name FROM lakes ORDER BY name").fetchall()
             list_of_lakes = [lake[0] for lake in list_of_lakes]
             return list_of_lakes
 
     def __init__(self):
         self.root = tk.Tk()
         self.style = ttk.Style()
+        self.windows_opened = set()
         self.task = None
+        self.engine = None
+        self.thread = None
         self.image_lake = None
         self.image_lake_refactor = None
 
@@ -95,8 +96,10 @@ class App:
         self.style.configure('Search.TEntry', foreground='grey')
         self.search_entry = ttk.Entry(self.root, style='Search.TEntry', width=100)
         self.search_entry.insert(tk.END, "Поиск...")
-        self.search_entry.bind("<FocusIn>", lambda event: self.hide_text_info(event.widget, "Поиск..."))
-        self.search_entry.bind('<FocusOut>', lambda event: self.set_text_info(event.widget, "Поиск..."))
+        self.search_entry.bind("<FocusIn>", lambda event: (self.hide_text_info(event.widget, "Поиск..."),
+                                                           self.root.after(10, self.check_value)))
+        self.search_entry.bind('<FocusOut>', lambda event: (self.set_text_info(event.widget, "Поиск..."),
+                                                            self.root.after_cancel(self.task)))
         self.search_entry.grid(row=0, column=0, sticky=tk.N)
         self.list_box.grid(row=0, column=0, sticky=tk.NS + tk.EW)
         self.list_box.configure(selectbackground=self.list_box.cget('background'), selectforeground='gray')
@@ -111,8 +114,6 @@ class App:
         self.text_field = tk.Text(self.root, wrap=tk.WORD)
         self.text_field.grid(row=0, column=2, sticky=tk.NS + tk.EW)
         self.text_field.configure(state="disabled")
-        # voice_button = ttk.Button(self.root, text="\U0001F4E2", command=self.voice, width=2)
-        # voice_button.grid(row=0, column=2, padx=5, pady=10, sticky=tk.NE)
 
         self.root.rowconfigure(0, weight=1, uniform="row")
         self.root.columnconfigure(0, weight=20, uniform="column")
@@ -132,6 +133,7 @@ class App:
         self.root.bind("<F3>", lambda event: self.delete_lake_window())
         file_menu.add_command(label="Выйти F4", command=self.root.quit)
         self.root.bind("<F4>", lambda event: self.refactor_lake())
+        self.root.bind("<F10>", lambda event: file_menu.post(event.x_root, event.y_root))
 
         # Menu2
         file_menu2 = tk.Menu(menu_bar, tearoff=0)
@@ -144,21 +146,20 @@ class App:
         self.root.config(menu=menu_bar)
         self.root.mainloop()
 
-    def voice(self):
-        text_to_speak = self.text_field.get(0.1, tk.END)
-        thread = threading.Thread(target=self.reading_text, args=(text_to_speak,))
-        thread.start()
+    @staticmethod
+    def set_text_info(field: ttk.Entry | tk.Entry, text_info: str):
+        if not field.get():
+            field.insert(0, text_info)
+            field.configure(foreground="#999")
 
     @staticmethod
-    def reading_text(text: str):
-        engine = pyttsx3.init()
-        voices = engine.getProperty('voices')
-        engine.setProperty('voice', voices[0].id)
-        engine.say(text)
-        engine.runAndWait()
+    def hide_text_info(field: ttk.Entry | tk.Entry, text_info: str):
+        if field.get() == text_info:
+            field.delete(0, 'end')
+            field.configure(foreground='black')
 
     def show_modal_window(self):
-        modal_window = tk.Toplevel()
+        modal_window = tk.Toplevel(name='modal_window')
         self.pack_window(modal_window)
         modal_window.resizable(False, False)
         modal_window.title("О программе")
@@ -167,7 +168,8 @@ class App:
         picture = ImageTk.PhotoImage(image)
         image_label = tk.Label(modal_window, font=("Arial", 40), padx=10, pady=10, image=picture)
         image_label.grid(row=0, column=0, padx=5, pady=5)
-        label_text = tk.Label(modal_window, text="База данных 'Известные озера России'\n(c) Simakhov D.A., Russia, 2023\n", padx=10, pady=10)
+        label_text = tk.Label(modal_window, text="База данных 'Известные озера России'\n"
+                                                 "(c) Simakhov D.A., Russia, 2023\n", padx=10, pady=10)
         label_text.grid(row=0, column=1, padx=5, pady=5)
 
         close_button = ttk.Button(modal_window, text="Ок", style="Close.TButton", command=modal_window.destroy)
@@ -179,7 +181,7 @@ class App:
         self.root.wait_window(modal_window)
 
     def help_window(self):
-        window = tk.Toplevel()
+        window = tk.Toplevel(name='help_window')
         window.title("Справка")
         window.geometry(f"400x200")
         self.pack_window(window)
@@ -199,13 +201,14 @@ class App:
         close_button.pack(side=tk.RIGHT, padx=20, pady=0)
 
     def pack_window(self, window: tk.Toplevel) -> (int, int):
+        self.windows_opened.add(window)
         screen_width = self.root.winfo_screenwidth()
         screen_height = self.root.winfo_screenheight()
         root_width = self.root.winfo_width()
         root_height = self.root.winfo_height()
         x = (screen_width - root_width) // 2
         y = (screen_height - root_height) // 2
-        window.geometry(f"+{x+150}+{y}")
+        window.geometry(f"+{x + 150}+{y}")
         window.focus_set()
 
     def change_listbox(self, field: tk.Listbox, text: str) -> None:
@@ -231,7 +234,7 @@ class App:
                 self.search_entry.insert(tk.END, '')
             search_window.destroy()
 
-        search_window = tk.Toplevel()
+        search_window = tk.Toplevel(name='search_window')
         search_window.title("Поиск")
         self.pack_window(search_window)
         entry_search = ttk.Entry(search_window, width=50)
@@ -256,19 +259,6 @@ class App:
         picture = ImageTk.PhotoImage(photo)
         self.image_field.configure(image=picture)
         self.image_field.image = picture
-
-    def set_text_info(self, field: ttk.Entry | tk.Entry, text_info: str):
-        if not field.get():
-            field.insert(0, text_info)
-            field.configure(foreground="#999")
-
-        self.root.after_cancel(self.task)
-
-    def hide_text_info(self, field: ttk.Entry | tk.Entry, text_info: str):
-        if field.get() == text_info:
-            field.delete(0, 'end')
-            field.configure(foreground='black')
-        self.root.after(10, self.check_value)
 
     def check_value(self) -> None:
         text = self.search_entry.get()
@@ -296,7 +286,7 @@ class App:
             pass
 
     def delete_lake_window(self):
-        del_window = tk.Toplevel()
+        del_window = tk.Toplevel(name="delete_window")
         del_window.title('Удаление озера')
         self.pack_window(del_window)
         entry_del_lake = ttk.Entry(del_window, width=50)
@@ -412,7 +402,7 @@ class App:
                 messagebox.showinfo('Результат', 'Озеро успешно добавлено в базу')
                 add_form.destroy()
 
-        add_form = tk.Toplevel()
+        add_form = tk.Toplevel(name='add_window')
         self.pack_window(add_form)
         add_form.title("Ввод информации о озере")
         add_form.resizable(False, False)
@@ -519,7 +509,7 @@ class App:
                 text_field_about_lake_refactor.insert(tk.END, description)
                 text_field_about_lake_refactor.configure(foreground='black')
 
-        refactor_form = tk.Toplevel(master=self.root)
+        refactor_form = tk.Toplevel(name='refactor_window')
         self.pack_window(refactor_form)
         refactor_form.title("Ввод информации о озере")
         refactor_form.resizable(False, False)
@@ -534,7 +524,7 @@ class App:
         refactor_file_button.image = photo
         refactor_file_button.grid(row=0, column=0, columnspan=2, padx=5, pady=5)
         delete_picture = ttk.Button(refactor_form, text="\u2715",
-                                    command=self.delete_picture_of_lake(refactor_file_button),
+                                    command=lambda: self.delete_picture_of_lake(refactor_file_button),
                                     width=2)
         delete_picture.grid(row=0, column=1, padx=50, pady=10, sticky=tk.NW)
 
