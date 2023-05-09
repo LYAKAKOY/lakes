@@ -1,6 +1,10 @@
+import logging
+import sqlite3
 import tkinter as tk
 import sqlite3 as sq
+import configparser
 import asyncio
+from typing import List
 import aiohttp
 import re
 import io
@@ -37,7 +41,7 @@ async def get_info_lake(session: aiohttp.ClientSession, url: str, pack_text_fiel
             else:
                 tk.messagebox.showerror("Ошибка", "Информации о данном озере нет в википедии")
     except aiohttp.ClientConnectionError:
-        tk.messagebox.showerror("Ошибка", "Отсутствует интернет или сайт википедии не отвечает!")
+        tk.messagebox.showerror("Ошибка", "Нет сетевого подключения!")
 
 
 async def get_wikipedia(topic: str, pack_text: tk.Text) -> None:
@@ -54,28 +58,21 @@ def connect_to_wikipedia(field: tk.Entry, pack_text: tk.Text) -> None:
 
 
 class App:
-    DB_NAME = "Russian's_lakes.db"
 
-    @classmethod
-    def get_list_of_lakes(cls) -> list:
-        with sq.connect(cls.DB_NAME) as connection:
-            cur = connection.cursor()
-            list_of_lakes = cur.execute("SELECT name FROM lakes ORDER BY name").fetchall()
-            list_of_lakes = [lake[0] for lake in list_of_lakes]
-            return list_of_lakes
+    def __init__(self, config_file: str):
 
-    def __init__(self):
+        config = configparser.ConfigParser()
+        config.read(config_file)
+
         self.root = tk.Tk()
         self.style = ttk.Style()
-        self.windows_opened = set()
+        self.DB_NAME = config.get('database', 'database_file')
         self.task = None
-        self.engine = None
-        self.thread = None
         self.image_lake = None
         self.image_lake_refactor = None
 
-        width = 700
-        height = 400
+        width = int(config.get('app', 'width'))
+        height = int(config.get('app', 'height'))
 
         screen_width = self.root.winfo_screenwidth()
         screen_height = self.root.winfo_screenheight()
@@ -158,6 +155,24 @@ class App:
             field.delete(0, 'end')
             field.configure(foreground='black')
 
+    def get_list_of_lakes(self) -> List[str]:
+        try:
+            with sq.connect(self.DB_NAME) as connection:
+                cur = connection.cursor()
+                list_of_lakes = cur.execute("SELECT name FROM lakes ORDER BY name").fetchall()
+                list_of_lakes = [lake[0] for lake in list_of_lakes]
+                return list_of_lakes
+        except sqlite3.OperationalError as e:
+            logging.warning(e)
+            tk.messagebox.showerror('Ошибка', 'Нет подключения к базе данных')
+            self.root.destroy()
+
+    def update_list_box(self):
+        self.list_box.delete(1, tk.END)
+        self.list_of_lakes = self.get_list_of_lakes()
+        for option in self.list_of_lakes:
+            self.list_box.insert(tk.END, option)
+
     def show_modal_window(self):
         modal_window = tk.Toplevel(name='modal_window')
         self.pack_window(modal_window)
@@ -186,14 +201,16 @@ class App:
         window.geometry(f"400x200")
         self.pack_window(window)
         window.resizable(False, False)
-        text = "База данных 'Знаменитые озера России'\n"
-        text += "Позволяет: добавлять/ изменять/ удалять информацию.\n"
-        text += "Клавиши программы:\n"
-        text += "F1-вызов справки по программе,\n"
-        text += "F2-добавить в базу данных,\n"
-        text += "F3-удалить из базы данных,\n"
-        text += "F4-изменить запись в базе данных,\n"
-        text += "F10-меню программы"
+
+        text = "База данных 'Знаменитые озера России'\n" \
+               "Позволяет: добавлять/ изменять/ удалять информацию.\n" \
+               "Клавиши программы:\n" \
+               "F1-вызов справки по программе,\n" \
+               "F2-добавить в базу данных,\n" \
+               "F3-удалить из базы данных,\n" \
+               "F4-изменить запись в базе данных,\n" \
+               "F10-меню программы"
+
         label = tk.Label(window, text=text, font=("Arial", 10))
         label.pack(padx=20, pady=10)
 
@@ -201,7 +218,6 @@ class App:
         close_button.pack(side=tk.RIGHT, padx=20, pady=0)
 
     def pack_window(self, window: tk.Toplevel) -> (int, int):
-        self.windows_opened.add(window)
         screen_width = self.root.winfo_screenwidth()
         screen_height = self.root.winfo_screenheight()
         root_width = self.root.winfo_width()
@@ -275,15 +291,16 @@ class App:
                 image_url, description = cur.execute("SELECT picture, description FROM lakes WHERE name = ?",
                                                      (name,)).fetchone()
 
-                self.image = image_url
-                self.on_resize(tk.Event())
+        except tk.TclError as e:
+            logging.warning(e)
+        else:
+            self.image = image_url
+            self.on_resize(tk.Event())
 
-                self.text_field.configure(state="normal")
-                self.text_field.delete(1.0, tk.END)
-                self.text_field.insert(tk.END, description)
-                self.text_field.configure(state="disabled")
-        except tk.TclError:
-            pass
+            self.text_field.configure(state="normal")
+            self.text_field.delete(1.0, tk.END)
+            self.text_field.insert(tk.END, description)
+            self.text_field.configure(state="disabled")
 
     def delete_lake_window(self):
         del_window = tk.Toplevel(name="delete_window")
@@ -309,7 +326,7 @@ class App:
         if name not in self.list_of_lakes:
             messagebox.showerror('Ошибка', f'Озера с названием {name} не существует в базе')
             return
-        with sq.connect("Russian's_Lakes.db") as connection:
+        with sq.connect(self.DB_NAME) as connection:
             cur = connection.cursor()
             cur.execute("DELETE FROM lakes WHERE name = ?", (name,))
         self.list_of_lakes.remove(name)
@@ -320,14 +337,14 @@ class App:
         messagebox.showinfo('Удаление озера', f'Удаление {name} успешно прошло!')
 
     @staticmethod
-    def clear_entry_text(event):
+    def clear_entry_text(event: tk.Event):
         field: tk.Text = event.widget
         if field.get(0.1, tk.END).strip() == "Введите информацию об озере...":
             field.delete(1.0, tk.END)
             field.configure(foreground='black')
 
     @staticmethod
-    def set_hint_text(event):
+    def set_hint_text(event: tk.Event):
         field: tk.Text = event.widget
         if not field.get(1.0, tk.END).strip():
             field.insert(0.1, "Введите информацию об озере...")
@@ -346,7 +363,7 @@ class App:
         field.configure(foreground="#999")
 
     def open_file_dialog(self, master: tk.Toplevel, field: tk.Button):
-        file_path = filedialog.askopenfilename(parent=master)
+        file_path = filedialog.askopenfilename(parent=master, filetypes=[("Image files", "*.jpg;*.png;*.jpeg")])
         if file_path:
             if field.winfo_name() == 'image_save':
                 self.image_lake = file_path
@@ -369,8 +386,8 @@ class App:
         field.configure(image=picture_not_found)
         field.image = picture_not_found
 
-    def check_image(self, type_image: str) -> bytes:
-        if type_image == 'save':
+    def check_image(self, type_image: int) -> bytes:
+        if type_image:
             image = self.image_lake
         else:
             image = self.image_lake_refactor
@@ -387,20 +404,30 @@ class App:
             name_of_lake = lake_name_entry.get()
             if name_of_lake in ('', "Введите название озера..."):
                 tk.messagebox.showerror("Ошибка", "Обязательные поля: картинка озера и название озера")
+                return
             else:
-                with sq.connect("Russian's_Lakes.db") as con:
-                    cur = con.cursor()
-                    image_data = self.check_image('save')
-                    text_about_lake = text_field_about_lake.get(1.0, tk.END)
-                    if text_about_lake.strip() == 'Введите информацию об озере...':
-                        text_about_lake = 'Нет информации'
-                    cur.execute("INSERT INTO lakes (name, picture, description) VALUES (?, ?, ?) ",
-                                (name_of_lake, image_data,
-                                 text_about_lake))
-                self.list_of_lakes.append(name_of_lake)
-                self.list_box.insert(tk.END, name_of_lake)
-                messagebox.showinfo('Результат', 'Озеро успешно добавлено в базу')
-                add_form.destroy()
+                try:
+                    with sq.connect(self.DB_NAME) as con:
+                        cur = con.cursor()
+                        image_data = self.check_image(1)
+                        text_about_lake = text_field_about_lake.get(1.0, tk.END)
+                        if text_about_lake.strip() == 'Введите информацию об озере...':
+                            text_about_lake = 'Нет информации'
+                        cur.execute("INSERT INTO lakes (name, picture, description) VALUES (?, ?, ?) ",
+                                    (name_of_lake, image_data,
+                                     text_about_lake))
+                except sqlite3.OperationalError as e:
+                    logging.warning(e)
+                    tk.messagebox.showerror('Ошибка', 'Нет подключения к базе данных')
+                    add_form.focus_set()
+                except sqlite3.IntegrityError as e:
+                    logging.warning(e)
+                    tk.messagebox.showerror('Ошибка', f'Озеро с названием {name_of_lake} уже существует в базе данных')
+                    add_form.focus_set()
+                else:
+                    self.update_list_box()
+                    messagebox.showinfo('Результат', 'Озеро успешно добавлено в базу')
+                    add_form.destroy()
 
         add_form = tk.Toplevel(name='add_window')
         self.pack_window(add_form)
@@ -469,35 +496,43 @@ class App:
             if name_of_lake in ('', "Введите название озера..."):
                 tk.messagebox.showerror("Ошибка", "Обязательное поле: название озера")
             else:
-                with sq.connect("Russian's_Lakes.db") as con:
-                    image_data = self.check_image('update')
-                    cur = con.cursor()
-                    text_about_lake = text_field_about_lake_refactor.get(1.0, tk.END)
-                    if text_about_lake.strip() == 'Введите информацию об озере...':
-                        text_about_lake = 'Нет информации'
-                    cur.execute("UPDATE lakes SET name = ?, picture = ?, description = ? WHERE name = ? ",
-                                (name_of_lake, image_data,
-                                 text_about_lake, name_update))
-                self.list_of_lakes.remove(name_update)
-                list_box_values = self.list_box.get(0, tk.END)
-                for i, value in enumerate(list_box_values):
-                    if value == name_update:
-                        self.list_box.delete(i)
-                self.list_of_lakes.append(name_of_lake)
-                self.list_box.insert(tk.END, name_of_lake)
-                messagebox.showinfo('Результат', 'Изменения успешно применены')
-                refactor_form.destroy()
+                try:
+                    with sq.connect(self.DB_NAME) as con:
+                        image_data = self.check_image(0)
+                        cur = con.cursor()
+                        text_about_lake = text_field_about_lake_refactor.get(1.0, tk.END)
+                        if text_about_lake.strip() == 'Введите информацию об озере...':
+                            text_about_lake = 'Нет информации'
+                        cur.execute("UPDATE lakes SET name = ?, picture = ?, description = ? WHERE name = ? ",
+                                    (name_of_lake, image_data,
+                                     text_about_lake, name_update))
+                except sqlite3.OperationalError as e:
+                    logging.warning(e)
+                    tk.messagebox.showerror('Ошибка', 'Нет подключения к базе данных')
+                    refactor_form.focus_set()
+                except sqlite3.IntegrityError as e:
+                    logging.warning(e)
+                    tk.messagebox.showerror('Ошибка', f'Озеро с названием {name_of_lake} уже существует в базе данных')
+                    refactor_form.focus_set()
+                else:
+                    self.update_list_box()
+                    messagebox.showinfo('Результат', 'Изменения успешно применены')
+                    refactor_form.destroy()
 
         def selected(event):
             if combo_box.current() == 0:
                 return
             box: ttk.Combobox = event.widget
             name = box.get()
-            with sq.connect(self.DB_NAME) as connection:
-                cur = connection.cursor()
-                image_url, description = cur.execute("SELECT picture, description FROM lakes WHERE name = ?",
-                                                     (name,)).fetchone()
-
+            try:
+                with sq.connect(self.DB_NAME) as connection:
+                    cur = connection.cursor()
+                    image_url, description = cur.execute("SELECT picture, description FROM lakes WHERE name = ?",
+                                                         (name,)).fetchone()
+            except sqlite3.OperationalError as e:
+                logging.warning(e)
+                tk.messagebox.showerror('Ошибка', 'Нет подключения к базе данных')
+            else:
                 photo_selected = Image.open(io.BytesIO(image_url)).resize((150, 150), Image.BICUBIC)
                 picture = ImageTk.PhotoImage(photo_selected)
                 refactor_file_button.configure(image=picture)
@@ -575,4 +610,4 @@ class App:
 
 
 if __name__ == '__main__':
-    App()
+    App('AmDB.ini')
