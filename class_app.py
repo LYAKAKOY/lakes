@@ -4,10 +4,10 @@ import tkinter as tk
 import sqlite3 as sq
 import configparser
 import asyncio
-from typing import List
 import aiohttp
 import re
 import io
+from typing import List
 from concurrent.futures import ThreadPoolExecutor
 from bs4 import BeautifulSoup
 from tkinter import ttk, messagebox
@@ -39,7 +39,8 @@ async def get_info_lake(session: aiohttp.ClientSession, url: str, pack_text_fiel
                     pack_text_field.configure(foreground='black')
                     pack_text_field.insert(tk.END, result)
             else:
-                tk.messagebox.showerror("Ошибка", "Информации о данном озере нет в википедии")
+                tk.messagebox.showinfo("Ошибка", "Информации о данном озере нет в википедии")
+                pack_text_field.focus_set()
     except aiohttp.ClientConnectionError:
         tk.messagebox.showerror("Ошибка", "Нет сетевого подключения!")
 
@@ -66,7 +67,9 @@ class App:
 
         self.root = tk.Tk()
         self.style = ttk.Style()
+
         self.DB_NAME = config.get('database', 'database_file')
+
         self.task = None
         self.image_lake = None
         self.image_lake_refactor = None
@@ -334,7 +337,7 @@ class App:
         for i, value in enumerate(list_box_values):
             if value == name:
                 self.list_box.delete(i)
-        messagebox.showinfo('Удаление озера', f'Удаление {name} успешно прошло!')
+        messagebox.showinfo('Удаление озера', f'"{name}" успешно удалено!')
 
     @staticmethod
     def clear_entry_text(event: tk.Event):
@@ -403,7 +406,7 @@ class App:
         def save_data():
             name_of_lake = lake_name_entry.get()
             if name_of_lake in ('', "Введите название озера..."):
-                tk.messagebox.showerror("Ошибка", "Обязательные поля: картинка озера и название озера")
+                tk.messagebox.showerror("Ошибка", "Обязательное поле: название озера")
                 return
             else:
                 try:
@@ -498,14 +501,20 @@ class App:
             else:
                 try:
                     with sq.connect(self.DB_NAME) as con:
-                        image_data = self.check_image(0)
                         cur = con.cursor()
+
                         text_about_lake = text_field_about_lake_refactor.get(1.0, tk.END)
                         if text_about_lake.strip() == 'Введите информацию об озере...':
                             text_about_lake = 'Нет информации'
-                        cur.execute("UPDATE lakes SET name = ?, picture = ?, description = ? WHERE name = ? ",
-                                    (name_of_lake, image_data,
-                                     text_about_lake, name_update))
+                        if self.image_lake_refactor is None or self.image_lake_refactor == 'default.png':
+                            cur.execute("UPDATE lakes SET name = ?, description = ? WHERE name = ? ",
+                                        (name_of_lake,
+                                         text_about_lake, name_update))
+                        else:
+                            image_data = self.check_image(0)
+                            cur.execute("UPDATE lakes SET name = ?, picture = ?, description = ? WHERE name = ? ",
+                                        (name_of_lake, image_data,
+                                         text_about_lake, name_update))
                 except sqlite3.OperationalError as e:
                     logging.warning(e)
                     tk.messagebox.showerror('Ошибка', 'Нет подключения к базе данных')
@@ -555,7 +564,8 @@ class App:
 
         refactor_file_button = ttk.Button(refactor_form, text="Обзор...",
                                           command=lambda: self.open_file_dialog(refactor_form, refactor_file_button),
-                                          image=photo)
+                                          image=photo,
+                                          name='image_refactor')
         refactor_file_button.image = photo
         refactor_file_button.grid(row=0, column=0, columnspan=2, padx=5, pady=5)
         delete_picture = ttk.Button(refactor_form, text="\u2715",
