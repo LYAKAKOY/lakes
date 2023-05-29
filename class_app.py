@@ -1,5 +1,4 @@
 import logging
-import sqlite3
 import tkinter as tk
 import sqlite3 as sq
 import configparser
@@ -10,8 +9,7 @@ import io
 from typing import List
 from concurrent.futures import ThreadPoolExecutor
 from bs4 import BeautifulSoup
-from tkinter import ttk, messagebox
-from tkinter import filedialog
+from tkinter import ttk, messagebox, filedialog
 from PIL import Image, ImageTk
 
 
@@ -165,7 +163,7 @@ class App:
                 list_of_lakes = cur.execute("SELECT name FROM lakes ORDER BY name").fetchall()
                 list_of_lakes = [lake[0] for lake in list_of_lakes]
                 return list_of_lakes
-        except sqlite3.OperationalError as e:
+        except sq.OperationalError as e:
             logging.warning(e)
             tk.messagebox.showerror('Ошибка', 'Нет подключения к базе данных')
             self.root.destroy()
@@ -419,11 +417,11 @@ class App:
                         cur.execute("INSERT INTO lakes (name, picture, description) VALUES (?, ?, ?) ",
                                     (name_of_lake, image_data,
                                      text_about_lake))
-                except sqlite3.OperationalError as e:
+                except sq.OperationalError as e:
                     logging.warning(e)
                     tk.messagebox.showerror('Ошибка', 'Нет подключения к базе данных')
                     add_form.focus_set()
-                except sqlite3.IntegrityError as e:
+                except sq.IntegrityError as e:
                     logging.warning(e)
                     tk.messagebox.showerror('Ошибка', f'Озеро с названием {name_of_lake} уже существует в базе данных')
                     add_form.focus_set()
@@ -515,11 +513,11 @@ class App:
                             cur.execute("UPDATE lakes SET name = ?, picture = ?, description = ? WHERE name = ? ",
                                         (name_of_lake, image_data,
                                          text_about_lake, name_update))
-                except sqlite3.OperationalError as e:
+                except sq.OperationalError as e:
                     logging.warning(e)
                     tk.messagebox.showerror('Ошибка', 'Нет подключения к базе данных')
                     refactor_form.focus_set()
-                except sqlite3.IntegrityError as e:
+                except sq.IntegrityError as e:
                     logging.warning(e)
                     tk.messagebox.showerror('Ошибка', f'Озеро с названием {name_of_lake} уже существует в базе данных')
                     refactor_form.focus_set()
@@ -538,7 +536,7 @@ class App:
                     cur = connection.cursor()
                     image_url, description = cur.execute("SELECT picture, description FROM lakes WHERE name = ?",
                                                          (name,)).fetchone()
-            except sqlite3.OperationalError as e:
+            except sq.OperationalError as e:
                 logging.warning(e)
                 tk.messagebox.showerror('Ошибка', 'Нет подключения к базе данных')
             else:
